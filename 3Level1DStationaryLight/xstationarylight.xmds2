@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- XMDS simulation for polariton interference -->
+
+<simulation xmds-version="2">
+
+  <name>sl</name>
+  <author>Jesse</author>
+  <description>
+    Simulation of a stationary light experiment
+  </description>
+
+  <features>
+    <benchmark/>
+    <error_check/>
+    <fftw plan="patient" />
+    <auto_vectorise/>
+    <globals>
+      <![CDATA[
+          const double pi = M_PI;
+ 
+          const  double agamma = pi*5.75; // half-linewidth of 87Rb D1 line. 'gamma' is reserved by a c library.
+
+          const double input_time = 20.0, input_width = 10.0; // pulse input time and width
+          
+          double delta; //one-photon detuning
+          double omega; //control field Rabi frequency
+          double eta; // magnetic field gradient
+          
+          double phi; //phase of the modulation of the input pulse
+          
+          double omegaf; // forward control field Rabi frequency
+          double omegab; // backward control field Rabi frequency
+          double spingamma; //spinwave decoherence term
+
+          double gaussian( double x, double w ) { return exp( -x*x/(w*w) ); }
+          
+          double BSwitch( double time ){
+            if (time < 40.4) { return 1.0; }
+            else if (time < 60.4) { return -1.0; }
+            else if (time < 80.4) { return 0.0; }
+            else { return -0.0; }
+          }
+          
+          // switching times for forward control field
+          double CfSwitch( double time ){
+            if (time < 40.4) { return 1.0; }
+            else if (time < 60.4) { return 0.0; }
+            else if (time < 80.4) { return 1.0; }
+            else { return 1.0; }
+          }
+          
+          // switching times for backward control field
+          double CbSwitch( double time ){
+            if (time < 40.4) { return 0.0; }
+            else if (time < 60.4) { return 0.0; }
+            else if (time < 80.4) { return 1.0; }
+            else { return 1.0; }
+          }
+          
+      ]]>
+    </globals>
+    <arguments>
+        <argument name="od" type="real" default_value="200" />
+        <argument name="delta_in" type="real" default_value="160.0" />
+        <argument name="omega_in" type="real" default_value="1" />
+        <argument name="spingamma_in" type="real" default_value="0.0005" />
+        <argument name="phi_in" type="real" default_value="0" />
+        <![CDATA[
+            /* derived constants */
+            delta = 2*pi*delta_in; // frequencies are multiplied by 2pi here to simplify equations
+            omega = 2*pi*omega_in; // these values are either default_value or supplied by arguments at runtime
+            spingamma = 2*pi*spingamma_in;
+            phi=2*pi*phi_in; //modulation phase for the input pulse. Runs from 0 to 1 with 0 corresponding to stationary light
+        ]]>
+    </arguments>
+    
+  </features>
+
+  <geometry>
+    <propagation_dimension> t </propagation_dimension>
+    <transverse_dimensions>
+      <dimension name="z" lattice="400"  domain="(-0.5, 0.5)" />
+    </transverse_dimensions>
+  </geometry>
+
+  <vector name="polarisation" initial_space="z" type="complex">
+    <components>
+      S Pf Pb
+    </components>
+    <initialisation>
+        <![CDATA[
+            S = 0.0;
+            Pf = 0.0;
+            Pb = 0.0;
+        ]]>
+    </initialisation>
+  </vector>
+
+  <vector name="opticalf" initial_space="z" type="complex">
+    <components>
+      Ef
+    </components>
+  </vector>
+  
+  <vector name="opticalb" initial_space="z" type="complex">
+    <components>
+      Eb
+    </components>
+  </vector>
+
+  <sequence>
+    <integrate algorithm="ARK45" interval="100.0" steps="400" tolerance="1.0e-9">
+      <samples>400</samples>
+      <operators>
+          
+          
+        <operator kind="functions">
+          <![CDATA[
+              omegaf = CfSwitch(t)*omega; //control field Rabi frequencies and gradients are multiplied by their
+              omegab = CbSwitch(t)*omega; //on/off switches to 
+              eta = 2*pi*0.3*BSwitch(t);
+          ]]>
+        </operator>
+          
+        <operator kind="cross_propagation" algorithm="RK4" propagation_dimension="z">
+          <integration_vectors>opticalf</integration_vectors>
+          <dependencies>polarisation</dependencies>
+          <boundary_condition kind="left">
+            <![CDATA[
+              Ef = gaussian( t-input_time, input_width )*cos(2*pi*0.07*(t-input_time)+phi);
+            ]]>
+          </boundary_condition>
+          <![CDATA[
+            dEf_dz =  i*sqrt(od)*Pf;
+          ]]>
+        </operator>
+        
+        <operator kind="cross_propagation" algorithm="RK4" propagation_dimension="z">
+            <integration_vectors>opticalb</integration_vectors>
+            <dependencies>polarisation</dependencies>
+            <boundary_condition kind="right">
+              <![CDATA[
+                Eb = 0;
+              ]]>
+            </boundary_condition>
+            <![CDATA[
+              dEb_dz = -i*sqrt(od)*Pb;
+            ]]>
+        </operator>
+        
+        <integration_vectors>polarisation</integration_vectors>
+        <![CDATA[
+        // maxwell-bloch equations for the atomic coherences P and S
+        dPf_dt = - (agamma + i*delta)*Pf + i*conj(omegaf)*S + i*sqrt(od)*agamma*Ef;
+        dPb_dt = - (agamma - i*delta)*Pb + i*conj(omegab)*S + i*sqrt(od)*agamma*Eb; // the sign of delta is switched due to the opposite one-photon detuning
+        dS_dt = -(spingamma + i*eta*z)*S + i*omegaf*Pf + i*omegab*Pb-i*(omegaf*conj(omegaf)*delta/(agamma*agamma + delta*delta))*S + i*(omegab*conj(omegab)*delta/(agamma*agamma + delta*delta))*S;
+        ]]>
+      </operators>
+    </integrate>
+  </sequence>
+
+  <output format="hdf5" filename="stationarylight.xsil">
+
+    <group>
+      <sampling basis="z" initial_sample="yes">
+        <moments>Efr Efi Ebr Ebi Sr Si</moments>
+        <dependencies>opticalf opticalb polarisation</dependencies>
+        <![CDATA[
+          Efr= Ef.Re();
+          Efi= Ef.Im();
+          Ebr = Eb.Re();
+          Ebi = Eb.Im();
+          Sr = S.Re();
+          Si = S.Im();
+        ]]>
+      </sampling>
+    </group>    
+  </output>
+</simulation>

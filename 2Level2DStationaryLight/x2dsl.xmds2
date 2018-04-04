@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- XMDS simulation for polariton interference -->
+
+<simulation xmds-version="2">
+
+  <name>waist</name>
+  <author>Jesse Everett</author>
+  <description>
+    Simulation of a two-level SLP
+  </description>
+
+  <features>
+    <benchmark/>
+    <error_check/>
+    <fftw plan="patient" />
+    <auto_vectorise/>
+    <globals>
+      <![CDATA[
+          const double pi = M_PI;
+        const  double agamma = pi*5.75;
+         
+          double eta;
+          
+          double omegaf;
+          double omegab;
+          double agammas;
+          complex deltasf;
+          complex deltasb;
+          
+          const real od = 200*500000./4.;
+          const real delta = 2*pi*200;
+          const real omega = 2*pi*21;
+          const real sigmay = 0.001; //m
+          const real k0 = 2*pi / (795e-9); //  photon momentum. currently removed because unimportant.
+          const real kc = 2*pi/ (795e-9);
+          
+			const real angf = 0.006006*0; // forward control field angle
+			const real angb = 0.006006*0; // backward control field angle
+			const real angp = 0.006006*0; // input probe angle
+
+          
+          const real k0fz = cos(angp) * k0; // input probe kz         
+ 
+          const real kcfz = cos(angf) * kc; // control kz and kys
+          const real kcbz = cos(angb) * kc;
+          
+          const real k0fy = sin(angp) * k0;
+          const real k0by = sin(angp) * k0;
+          const real kcfy = sin(angf) * kc;
+          const real kcby = sin(angb) * kc;
+
+          double gaussian( double x, double w ) { return exp( -x*x/(w*w) ); }
+          
+          double BSwitch( double time ){
+            if (time < 40) { return 0; }
+            else { return 0.0; }
+          }
+          
+          double CfSwitch( double time ){
+            if (time < 40) { return 1.0; }
+            else { return 1.0; }
+          }
+          
+          double CbSwitch( double time ){
+            if (time < 40) { return 1.0; }
+            else { return 1.0; }
+          }
+          
+          double rz( double zz, double ww){
+        	if (zz == 0) { return 1000000; }
+        	else { return zz*(1+pow(pi*ww*ww/(zz*795e-9),2)); }}      
+      ]]>
+    </globals>
+    <arguments>
+        <argument name="waist" type="real" default_value="0.000001" />
+        <![CDATA[
+            /* derived constants */
+        ]]>
+    </arguments>
+    
+  </features>
+
+  <geometry>
+    <propagation_dimension> t </propagation_dimension>
+    <transverse_dimensions>
+      <dimension name="y" lattice="1600" domain="(-0.000016,0.000016)" />
+      <dimension name="z" lattice="400"  domain="(-0.000004, 0.000004)" />
+    </transverse_dimensions>
+  </geometry>
+
+  <vector name="polarisation" initial_space="z y" type="complex">
+    <components>
+      S
+    </components>
+    <initialisation>
+        <![CDATA[
+        double zr = pi*waist*waist/795e-9; // set an initial spinwave to what would be ideally stored from a gaussian input beam.
+        double wz = waist*sqrt(1+pow(z/zr,2));
+        S = waist/wz*exp(-y*y/(wz*wz))*exp(-i*(k0*y*y/(2*rz(z,waist))-atan(z/zr)))*erf(10000000*z);
+        ]]>
+    </initialisation>
+  </vector>
+
+  <vector name="opticalf" initial_space="z y" type="complex">
+    <components>
+      Ef
+    </components>
+  </vector>
+  
+  <vector name="opticalb" initial_space="z y" type="complex">
+    <components>
+      Eb
+    </components>
+  </vector>
+
+  <sequence>
+    <integrate algorithm="ARK89" interval="1.0" steps="400" tolerance="1.0e-9">
+      <samples>10</samples>
+      <operators> 
+        <operator kind="functions">
+          <![CDATA[
+              omegaf = CfSwitch(t)*omega; // this function combines the time and spatial dependence of the control fields
+              omegab = CbSwitch(t)*omega; // 
+              eta = 2*pi*0.60*BSwitch(t); // 
+          ]]>
+        </operator>
+        
+        <operator kind="cross_propagation" algorithm="RK4"  propagation_dimension="z">
+            <operator kind="ip" constant="yes">
+              <operator_names>Ltt </operator_names>
+              <![CDATA[
+                Ltt = i*(ky*ky)/(2*k0); // This gives the probe beam accurate 2D divergence
+              ]]>
+            </operator>
+            
+          <integration_vectors>opticalf</integration_vectors>
+          <dependencies>polarisation</dependencies>
+          <boundary_condition kind="left">
+            <![CDATA[
+              Ef = 0;
+            ]]>
+          </boundary_condition>
+          <![CDATA[
+            dEf_dz =  i*sqrt(od)*(omegaf/delta) * S + Ltt[Ef]; // the phase matching here assumes Ef and Eb travel parallel to z. will require a little adjustment otherwise.
+          ]]>
+          </operator>
+
+        <operator kind="cross_propagation" algorithm="RK4"  propagation_dimension="z">
+            <operator kind="ip" constant="yes">
+              <operator_names>Ltt </operator_names>
+              <![CDATA[
+                Ltt = -i*(ky*ky)/(2*k0); // This gives the probe beam 2D divergence
+              ]]>
+            </operator>
+            <integration_vectors>opticalb</integration_vectors>
+            <dependencies>polarisation</dependencies>
+            <boundary_condition kind="right">
+              <![CDATA[
+                Eb = 0;
+              ]]>
+            </boundary_condition>
+            <![CDATA[
+              dEb_dz = -i*sqrt(od)*(omegab/delta) * S + Ltt[Eb];
+            ]]>
+        </operator>
+        
+        <integration_vectors>polarisation</integration_vectors>
+        <dependencies>opticalf opticalb</dependencies>
+        <![CDATA[
+          dS_dt = i*sqrt(od)*agamma*(omegaf*Ef/delta + omegab*Eb/delta);
+        ]]>
+      </operators>
+    </integrate>
+  </sequence>
+
+  <output format="hdf5" filename="waist.xsil">
+
+    <group>
+      <sampling basis="z y" initial_sample="yes">
+        <moments>EfR EfI EbR EbI SR SI</moments>
+        <dependencies>opticalf opticalb polarisation</dependencies>
+        <![CDATA[
+          _SAMPLE_COMPLEX(S);
+          _SAMPLE_COMPLEX(Ef);
+          _SAMPLE_COMPLEX(Eb);
+        ]]>
+      </sampling>
+    </group>
+    
+  </output>
+</simulation>
