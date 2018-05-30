@@ -1,0 +1,140 @@
+<simulation xmds-version="2">
+	<name>1DRSL3L</name>
+	<author>Jesse</author>
+	<description> 3 level Raman stationary light simulation. Solves the 3-level Maxwell-Bloch equations for a 1D ensemble of 
+	stationary atoms under counter-propagating detuned control fields
+	
+	The secular approximation is made, where each probe couples to the spinwave only by the co-propagating control field.
+	We also include here symmetric detuning of the two pairs of fields to satisfy Raman stationary light condition.
+	</description>
+<features>
+	<benchmark />
+	<bing />
+	<globals>
+		<![CDATA[
+		const double pi = M_PI;
+		double agamma = pi; 		/* excited state coherence decay (half the excited state linewidth, set to pi means all frequencies in terms of linewidth */
+		complex delta;  		/* one-photon detuning*/
+		double omega;		/*control field rabi frequency*/
+		complex omf;
+		complex omb;
+		double eta;   		/*operator for gradient*/		
+		const double bandwidth = 2.0;
+		const double pulsewidth = 1.2;
+		const double tin = 2;      
+  
+
+		double gradientswitch(double time){
+  if (time < 4) { return 1.0; }
+  else if (time < 6) {return -1.0; }
+  else {return 0.0; }}
+  
+  		double controlfswitch(double time){
+  if (time < 4) { return 1.0; }
+  else if (time < 6) { return 0.0; }
+  else {return 1.0; }}
+  
+  		double controlbswitch(double time){
+  if (time < 6) { return 0.0; }
+  else {return 1.0; }}
+
+
+		double gaussian( double x, double w ) { return exp( -2 * pow(x,2) / pow(w,2) ); }
+		]]>
+	</globals>
+	<arguments append_args_to_output_filename="yes">
+		<argument default_value= "1000" name = "od" type = "real" />
+		<argument default_value= "8" name = "omega_in" type = "real" />
+		<argument default_value= "200" name = "delta_in" type = "real" />
+		<argument default_value= "0" name = "phase" type = "real" />
+		<![CDATA[
+		omega = 2*pi*omega_in;
+		delta = 2*pi*delta_in;
+		]]>
+	</arguments>
+</features>
+<geometry>
+	<propagation_dimension>t</propagation_dimension>
+	<transverse_dimensions>
+	<dimension name="z" lattice="100" domain="(-0.5, 0.5)" />
+	</transverse_dimensions>
+</geometry>
+
+<vector initial_space="z" name="spinwave" type="complex">
+	<components>S Pf Pb</components>
+</vector>
+
+<vector initial_space="z" name="forwardprobe" type="complex">
+	<components>Ef</components>
+</vector>
+
+<vector initial_space="z" name="backwardprobe" type="complex">
+	<components>Eb</components>
+</vector>
+
+<sequence>
+	<integrate algorithm="ARK45" interval="10" steps="200" tolerance="1.0e-6">
+	<samples>200</samples>
+	
+	<operators>   
+		<operator kind="functions">
+		<![CDATA[
+		omf = controlfswitch(t)*omega;
+		omb = controlbswitch(t)*omega;
+		eta = 2*pi*bandwidth * gradientswitch(t); /* placing within the operators simplifies time dependence easier and omits it from the often long Maxwell-Bloch eqs*/
+		]]>
+		</operator>
+		
+		<operator kind="cross_propagation" algorithm="RK4"  propagation_dimension="z"> 
+			<integration_vectors> forwardprobe </integration_vectors>
+			<dependencies>spinwave</dependencies>
+			<boundary_condition kind="left">
+				<![CDATA[
+				Ef= sin(pi*t + phase) * gaussian(t-tin,pulsewidth); 
+				]]>
+			</boundary_condition>
+			<![CDATA[
+			dEf_dz = i * sqrt(od) * Pf;
+			]]>
+			</operator>
+		
+		<operator kind="cross_propagation" algorithm="RK4"  propagation_dimension="z">
+			<integration_vectors> backwardprobe </integration_vectors>
+			<dependencies>spinwave</dependencies>
+			<boundary_condition kind="right">
+				<![CDATA[
+				Eb= 0; 
+				]]>
+			</boundary_condition>
+			<![CDATA[
+			dEb_dz = - i * sqrt(od) * Pb;
+			]]>
+		</operator>
+
+			<integration_vectors>spinwave</integration_vectors>
+			<dependencies>forwardprobe backwardprobe</dependencies>
+				<![CDATA[
+				dPf_dt = (-agamma + i * delta) * Pf + i * conj(omf) * S + i*agamma*sqrt(od)*Ef;
+				dPb_dt = (-agamma - i * delta) * Pb + i * conj(omb) * S + i*agamma*sqrt(od)*Eb;
+				dS_dt = i * eta * z * S + i * omf * Pf + i * omb * Pb + i*((omf*conj(omf)-omb*conj(omb))*(delta+agamma)/(agamma*agamma + delta*delta))*S;
+			]]>
+	</operators>
+	</integrate>
+</sequence>
+
+<output filename="1DRSL3L" format="hdf5">
+	<group>
+	<sampling basis="z" initial_sample="yes">
+		<moments>SR SI PfR PfI PbR PbI EfR EfI EbR EbI</moments>
+		<dependencies>forwardprobe backwardprobe spinwave</dependencies>
+		<![CDATA[
+		_SAMPLE_COMPLEX(S);
+		_SAMPLE_COMPLEX(Ef);
+		_SAMPLE_COMPLEX(Pf);
+		_SAMPLE_COMPLEX(Eb);
+		_SAMPLE_COMPLEX(Pb);		
+		]]>
+	</sampling>
+	</group>
+</output>
+</simulation>

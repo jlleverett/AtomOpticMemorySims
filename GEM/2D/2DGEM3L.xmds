@@ -1,0 +1,143 @@
+<simulation xmds-version="2">
+	<name>2DGEM3L</name>
+	<author>Jesse</author>
+	<description> 3 level gradient echo memory simulation. Solves the 3-level Maxwell-Bloch equations for a 2D ensemble of 
+	stationary atoms under a classical plane wave control field at an angle 'ang' in radians, and a weak probe with waist 'waist' in metres
+	
+	The waist is defined for the amplitude rather than intensity of the probe optical field.
+	</description>
+<features>
+	<benchmark />
+	<bing />
+	<globals>
+		<![CDATA[
+		const double pi = M_PI;
+		double agamma = pi; 		/* excited state coherence decay (half the excited state linewidth, set to pi means all frequencies in terms of linewidth */
+		complex delta;  		/* one-photon detuning*/
+		double omega;		/*control field rabi frequency*/
+		complex om;
+		double eta;   		/*operator for gradient*/		
+		double od; 
+		double bandwidth;
+		const double memlength = 0.03; // memory length in metres. Make sure you set z domain accordingly
+		const double ml2 = memlength/2.0;
+		
+		const double kp = 2*pi / (795e-9); // use metres in these simulations. easier to keep track of wavelengths
+        const double kc = 2*pi/ (795e-9);  // remember that k'dimension' are reserved eg kz, ky.
+        
+        double kcz;
+        double kcy;
+        
+        double zr; // rayleigh length
+        double wz; // waist at memory end
+        
+        
+
+		double gradientswitch(double time){
+  if (time < 5) { return 1.0; }
+  else {return -1.0; }}
+  
+  		double controlswitch(double time){
+  if (time < 4) { return 1.0; }
+  else if (time < 6) {return 0.0;}
+  else {return 1.0; }}
+  
+        double roco( double zz, double ww){ // one on radius of curvature of gaussian beam
+  if (zz == 0) { return 0; } // because we can't handle 0/0
+  else { return 1.0/(zz*(1+pow(pi*ww*ww/(zz*795e-9),2))); }}
+
+		double gaussian( double x, double w ) { return exp( -2 * pow(x,2) / pow(w,2) ); }
+		]]>
+	</globals>
+	<arguments append_args_to_output_filename="yes">
+		<argument default_value= "2.8" name = "tin" type = "real" />
+		<argument default_value= "1.2" name = "pulsewidth" type = "real" />
+		<argument default_value= "1" name = "bandwidth_in" type = "real" />
+		<argument default_value= "1000" name = "od_in" type = "real" />
+		<argument default_value= "8" name = "omega_in" type = "real" />
+		<argument default_value= "200" name = "delta_in" type = "real" />
+		<argument default_value= "0.0002" name = "waist" type = "real" />
+		<argument default_value= "0" name = "ang" type = "real" />
+		<![CDATA[
+		omega = 2*pi*omega_in;
+		delta = 2*pi*delta_in;
+		od = od_in / memlength; // we use length in metres so set od_in as absolute od
+		bandwidth = bandwidth_in / memlength; // similarly for bandwidth
+		zr = kp * waist*waist / 2.0;
+		wz = waist*sqrt(1+pow(ml2/zr,2)); // waist at edge of memory
+		kcz = cos(ang) * kc;
+		kcy = sin(ang) * kc;
+		]]>
+	</arguments>
+</features>
+<geometry>
+	<propagation_dimension>t</propagation_dimension>
+	<transverse_dimensions>
+	<dimension name="z" lattice="400" domain="(-0.015,0.015)" />
+    <dimension name="y" lattice="20"  domain="(-0.0002, 0.0002)" />
+	</transverse_dimensions>
+</geometry>
+
+<vector initial_space="z y" name="spinwave" type="complex">
+	<components>S P</components>
+</vector>
+
+<vector initial_space="z y" name="probe" type="complex">
+	<components>E</components>
+</vector>
+
+<sequence>
+	<integrate algorithm="ARK45" interval="10" steps="200" tolerance="1.0e-6">
+	<samples>200</samples>
+	
+	<operators>   
+		<operator kind="functions">
+		<![CDATA[
+		om = controlswitch(t)*omega;
+		eta = 2*pi*bandwidth * gradientswitch(t); /* placing within the operators simplifies time dependence easier and omits it from the often long Maxwell-Bloch eqs*/
+		]]>
+		</operator>
+		
+		<operator kind="cross_propagation" algorithm="RK4"  propagation_dimension="z">
+            <operator kind="ip" constant="yes">
+              <operator_names>Ltt</operator_names>
+              <![CDATA[
+                Ltt = i*(ky*ky)/(2*kp); // This gives the probe beam accurate 2D divergence
+              ]]>
+            </operator>	
+            	     
+			<integration_vectors> probe </integration_vectors>
+			<dependencies>spinwave</dependencies>
+			<boundary_condition kind="left">
+				<![CDATA[
+				E= gaussian(t-tin,pulsewidth) * waist/wz*exp(-y*y/(wz*wz))*exp(-i*(kp*y*y*roco(-ml2,waist)/2.0-atan(-ml2/zr))) ; 
+				]]>
+			</boundary_condition>
+			<![CDATA[
+			dE_dz = i * sqrt(od) * P + Ltt[E];
+			]]>
+		</operator>
+
+			<integration_vectors>spinwave</integration_vectors>
+				<![CDATA[
+				dP_dt = (-agamma + i * delta) * P + i * conj(om*exp(i * ((kcz-kp)*z+kcy*y))) * S + i*agamma*sqrt(od)*E;
+				dS_dt = i * eta * z * S + i * om * exp(i * ((kcz-kp)*z+kcy*y)) * P + i*(om*conj(om)*(delta+agamma)/(agamma*agamma + delta*delta))*S;
+			]]>
+	</operators>
+	</integrate>
+</sequence>
+
+<output filename="2DGEM3L" format="hdf5">
+	<group>
+	<sampling basis="z y" initial_sample="yes">
+		<moments>SR SI PR PI ER EI</moments>
+		<dependencies>probe spinwave</dependencies>
+		<![CDATA[
+		_SAMPLE_COMPLEX(S);
+		_SAMPLE_COMPLEX(E);
+		_SAMPLE_COMPLEX(P);		
+		]]>
+	</sampling>
+	</group>
+</output>
+</simulation>
